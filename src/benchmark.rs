@@ -8,6 +8,9 @@ use rand::rng;
 use rand::seq::SliceRandom;
 use seq_macro::seq;
 
+use crate::CliArgs;
+use crate::topo::SystemTopology;
+
 #[derive(Clone, Copy, Default)]
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[repr(align(64))]
@@ -18,8 +21,20 @@ pub struct PaddedNode {
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const _: () = assert!(size_of::<PaddedNode>() == 64);
 
-pub fn run_benchmark(buffer_size_bytes: usize, core: CoreId, iterations: usize, samples: usize) {
-    core_affinity::set_for_current(core);
+pub fn run_benchmark(
+    buffer_size_bytes: usize,
+    core: CoreId,
+    iterations: usize,
+    samples: usize,
+    args: &CliArgs,
+) {
+    if args.numa {
+        let topo = SystemTopology::new();
+        topo.bind(core.id, 0);
+    } else {
+        core_affinity::set_for_current(core);
+    }
+
     let mut system = sysinfo::System::new();
 
     let node_size = size_of::<PaddedNode>();

@@ -8,6 +8,7 @@ use crate::benchmark::{PaddedNode, run_benchmark};
 
 mod benchmark;
 mod benchmark_ptr;
+mod topo;
 
 const DEFAULT_ITERATIONS: usize = 10_000_000;
 const DEFAULT_SAMPLES: usize = 50;
@@ -48,6 +49,10 @@ pub struct CliArgs {
     /// Specify the core by id that should be used. By default core 0 are used.
     #[clap(short, long, value_parser)]
     core: Option<usize>,
+
+    /// Specify the programme whether bind local numa if possible.
+    #[clap(long, value_parser)]
+    numa: bool,
 }
 pub fn get_cpuid() -> Option<raw_cpuid::CpuId<raw_cpuid::native_cpuid::CpuIdReaderNative>> {
     Some(raw_cpuid::CpuId::default())
@@ -65,6 +70,9 @@ fn main() {
     let args = CliArgs::parse();
     println!("Number of iterations: {}", args.num_iterations);
     println!("Number of samples:    {}", args.num_samples);
+    if args.numa {
+        println!("With NUMA enabled");
+    }
     let cores = core_affinity::get_core_ids().expect("unable to get cores");
 
     let core = if let Some(core) = args.core {
@@ -88,6 +96,7 @@ fn main() {
                 core,
                 args.num_iterations,
                 args.num_samples,
+                &args,
             );
         }
     }
@@ -106,6 +115,7 @@ fn main() {
                 core,
                 args.num_iterations,
                 args.num_samples,
+                &args,
             );
         }
     }
