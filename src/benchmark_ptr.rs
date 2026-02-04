@@ -88,6 +88,19 @@ pub fn run_benchmark(buffer_size_bytes: usize, core: CoreId, iterations: usize, 
     system.refresh_cpu_frequency();
     let sys_bench_freq = system.cpus()[core.id].frequency() as f64 / 1000.0;
 
+
+    // NOTE: Pointer Chasing by pointer
+
+    // sample
+    let iterations_per_sample = iterations / samples;
+    let mut sample_latencies = Vec::with_capacity(samples);
+    // loop unrolling
+    let batch_size = 16;
+    let loop_count = iterations_per_sample / batch_size;
+    let remainder = iterations_per_sample % batch_size;
+
+    let clock = quanta::Clock::new();
+
     // Warmup again due to `read frequency`
     {
         let warmup_start = Instant::now();
@@ -100,18 +113,6 @@ pub fn run_benchmark(buffer_size_bytes: usize, core: CoreId, iterations: usize, 
             }
         }
     }
-
-    // NOTE: Pointer Chasing
-
-    // sample
-    let iterations_per_sample = iterations / samples;
-    let mut sample_latencies = Vec::with_capacity(samples);
-    // loop unrolling
-    let batch_size = 16;
-    let loop_count = iterations_per_sample / batch_size;
-    let remainder = iterations_per_sample % batch_size;
-
-    let clock = quanta::Clock::new();
 
     for _ in 0..samples {
         std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);

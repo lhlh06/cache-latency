@@ -49,8 +49,18 @@ pub struct CliArgs {
     #[clap(short, long, value_parser)]
     core: Option<usize>,
 }
+pub fn get_cpuid() -> Option<raw_cpuid::CpuId<raw_cpuid::native_cpuid::CpuIdReaderNative>> {
+    Some(raw_cpuid::CpuId::default())
+}
 
 fn main() {
+    if let Some(brand) = get_cpuid()
+        .and_then(|c| c.get_processor_brand_string())
+        .map(|c| c.as_str().to_string())
+    {
+        println!("CPU: {}", brand);
+    }
+
     println!("Size of PaddedNode: {} bytes", size_of::<PaddedNode>());
     let args = CliArgs::parse();
     println!("Number of iterations: {}", args.num_iterations);

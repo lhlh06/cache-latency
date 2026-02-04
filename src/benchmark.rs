@@ -70,6 +70,18 @@ pub fn run_benchmark(buffer_size_bytes: usize, core: CoreId, iterations: usize, 
 
     current_idx = black_box(current_idx);
 
+    // NOTE: Pointer Chasing by index
+
+    // sample
+    let iterations_per_sample = iterations / samples;
+    let mut sample_latencies = Vec::with_capacity(samples);
+    // loop unrolling
+    let batch_size = 16;
+    let loop_count = iterations_per_sample / batch_size;
+    let remainder = iterations_per_sample % batch_size;
+
+    let clock = quanta::Clock::new();
+
     // warmup again due to `read frequency`
     {
         let warmup_start = Instant::now();
@@ -83,28 +95,16 @@ pub fn run_benchmark(buffer_size_bytes: usize, core: CoreId, iterations: usize, 
         }
     }
 
-    // NOTE: Pointer Chasing
-
-    // sample
-    let iterations_per_sample = iterations / samples;
-    let mut sample_latencies = Vec::with_capacity(samples);
-    // loop unrolling
-    let batch_size = 16;
-    let loop_count = iterations_per_sample / batch_size;
-    let remainder = iterations_per_sample % batch_size;
-
-    let clock = quanta::Clock::new();
-
     for _ in 0..samples {
         std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 
         let start = clock.raw();
         for _ in 0..loop_count {
-            seq!(_ in 0..16 {
-                unsafe {
-                    current_idx = arena.get_unchecked(current_idx).next_index;
-                }
-            });
+            unsafe {
+                seq!(_ in 0..16 {
+                        current_idx = arena.get_unchecked(current_idx).next_index;
+                });
+            }
         }
 
         for _ in 0..remainder {
