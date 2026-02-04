@@ -46,11 +46,11 @@ pub struct CliArgs {
     #[clap(short, long, value_delimiter(','), default_value = DEFAULT_SIZES, value_parser)]
     sizes: Vec<ByteSize>,
 
-    /// Specify the core by id that should be used. By default core 0 are used.
+    /// Specify the core by id that should be used. By default, available core 0 is used.
     #[clap(short, long, value_parser)]
     core: Option<usize>,
 
-    /// Specify the programme whether bind local numa if possible.
+    /// Specify the program whether bind local numa if possible.
     #[clap(long, value_parser)]
     numa: bool,
 }
@@ -59,6 +59,7 @@ pub fn get_cpuid() -> Option<raw_cpuid::CpuId<raw_cpuid::native_cpuid::CpuIdRead
 }
 
 fn main() {
+    let args = CliArgs::parse();
     if let Some(brand) = get_cpuid()
         .and_then(|c| c.get_processor_brand_string())
         .map(|c| c.as_str().to_string())
@@ -67,7 +68,6 @@ fn main() {
     }
 
     println!("Size of PaddedNode: {} bytes", size_of::<PaddedNode>());
-    let args = CliArgs::parse();
     println!("Number of iterations: {}", args.num_iterations);
     println!("Number of samples:    {}", args.num_samples);
     if args.numa {
