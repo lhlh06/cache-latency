@@ -167,14 +167,22 @@ pub fn run_benchmark(
 
     let sum_latency: f64 = sample_latencies.iter().sum();
     let mean_latency = sum_latency / samples as f64;
+    sample_latencies.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let n = sample_latencies.len();
+    let median = if n % 2 == 0 {
+        (sample_latencies[n / 2 - 1] + sample_latencies[n / 2]) / 2.0
+    } else {
+        sample_latencies[n / 2]
+    };
 
     let est_cycles = min_latency * sys_bench_freq;
 
     // TODO: show data in table format
     println!(
-        "Size {:>10} | Min {:>6.2} ns | Avg {:>6.2} ns | Max {:>6.2} ns | ~Cyc {:>5.1} | {:.2} GHz",
+        "Size {:>10} | Min {:>6.2} ns | Med {:>6.2}ns | Avg {:>6.2} ns | Max {:>6.2} ns | ~Cyc {:>5.1} | {:.2} GHz",
         ByteSize(buffer_size_bytes.try_into().unwrap()),
         min_latency,
+        median,
         mean_latency,
         max_latency,
         est_cycles,
