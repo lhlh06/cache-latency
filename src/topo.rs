@@ -97,8 +97,6 @@ impl SystemTopology {
         // Memory Binding
         let nodeset = target_node.nodeset().expect("NUMA node has no Node set");
 
-        // MEMORY_BINDING_MANDATORY: 强制！如果内存不足分配失败，不要回退到其他节点
-        // 这对于 benchmark 至关重要，否则 OS 可能会悄悄把内存分到别处污染数据
         self.topology
             .bind_memory(
                 nodeset,

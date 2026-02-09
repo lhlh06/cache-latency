@@ -10,6 +10,7 @@ use seq_macro::seq;
 
 use crate::CliArgs;
 use crate::topo::SystemTopology;
+use crate::util::raw_fenced;
 
 #[derive(Clone, Copy, Default)]
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -113,7 +114,7 @@ pub fn run_benchmark(
     for _ in 0..samples {
         std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 
-        let start = clock.raw();
+        let start = raw_fenced(&clock);
         for _ in 0..loop_count {
             unsafe {
                 seq!(_ in 0..16 {
@@ -127,7 +128,7 @@ pub fn run_benchmark(
                 current_idx = arena.get_unchecked(current_idx).next_index;
             }
         }
-        let end = clock.raw();
+        let end = raw_fenced(&clock);
         std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 
         // let cycles = end - start;

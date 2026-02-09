@@ -9,6 +9,7 @@ use crate::benchmark::{PaddedNode, run_benchmark};
 mod benchmark;
 mod benchmark_ptr;
 mod topo;
+mod util;
 
 const DEFAULT_ITERATIONS: usize = 10_000_000;
 const DEFAULT_SAMPLES: usize = 50;
@@ -28,7 +29,7 @@ const DEFAULT_SAMPLES: usize = 50;
 //     ByteSize(1024 * 1024 * 512), // 512 MB (DRAM - Deep)
 // ];
 
-const DEFAULT_SIZES: &str = "8kiB,16kiB,32kiB,64kiB,128kiB,256kiB,512kiB,1miB,2miB,4miB,8miB,12miB,16miB,20miB,32miB,64miB,128miB,256miB,512miB,1giB";
+const DEFAULT_SIZES: &str = "8kiB,16kiB,32kiB,64kiB,128kiB,256kiB,512kiB,1miB,2miB,4miB,8miB,12miB,16miB,20miB,32miB,64miB,128miB,256miB,512miB,1giB,2giB";
 
 #[derive(clap::Parser)]
 pub struct CliArgs {

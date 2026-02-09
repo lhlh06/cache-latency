@@ -10,6 +10,7 @@ use seq_macro::seq;
 
 use crate::CliArgs;
 use crate::topo::SystemTopology;
+use crate::util::raw_fenced;
 
 #[derive(Clone, Copy)]
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -92,7 +93,7 @@ pub fn run_benchmark(
         while warmup_start.elapsed() < min_warmup_duration {
             for _ in 0..1_000 {
                 unsafe {
-                    current_ptr = (*current_ptr).next;
+                    current_ptr = std::ptr::read_volatile(&(*current_ptr).next);
                 }
             }
         }
@@ -121,7 +122,7 @@ pub fn run_benchmark(
         while warmup_start.elapsed() < min_warmup_duration {
             for _ in 0..1_000 {
                 unsafe {
-                    current_ptr = (*current_ptr).next;
+                    current_ptr = std::ptr::read_volatile(&(*current_ptr).next);
                 }
             }
         }
@@ -130,24 +131,26 @@ pub fn run_benchmark(
     for _ in 0..samples {
         std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 
-        let start = clock.raw();
+        // let start = clock.raw();
+        let start = raw_fenced(&clock);
         for _ in 0..loop_count {
             seq!(_ in 0..16 {
                 unsafe {
-                    current_ptr = (*current_ptr).next;
+                    current_ptr = std::ptr::read_volatile(&(*current_ptr).next);
                 }
             });
         }
 
         for _ in 0..remainder {
             unsafe {
-                current_ptr = (*current_ptr).next;
+                current_ptr = std::ptr::read_volatile(&(*current_ptr).next);
             }
         }
-        let end = clock.raw();
+        // let end = clock.raw();
+        let end = raw_fenced(&clock);
         std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 
-        // let cycles = end - start;
+        // let cycles_total = (end - start) as f64;
         let duration_ns = clock.delta_as_nanos(start, end);
         let latency = duration_ns as f64 / iterations_per_sample as f64;
         sample_latencies.push(latency);
