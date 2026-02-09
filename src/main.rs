@@ -11,8 +11,8 @@ mod benchmark_ptr;
 mod topo;
 mod util;
 
-const DEFAULT_ITERATIONS: usize = 10_000_000;
-const DEFAULT_SAMPLES: usize = 50;
+const DEFAULT_ITERATIONS: usize = 30_000;
+const DEFAULT_SAMPLES: usize = 1000;
 
 // const DEFAULT_SIZES: [ByteSize; 12] = [
 //     ByteSize(1024 * 16),         // 16 KB  (L1)

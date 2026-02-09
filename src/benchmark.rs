@@ -10,7 +10,7 @@ use seq_macro::seq;
 
 use crate::CliArgs;
 use crate::topo::SystemTopology;
-use crate::util::raw_fenced;
+use crate::util::{measure_overhead_ns, raw_fenced};
 
 #[derive(Clone, Copy, Default)]
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -25,8 +25,8 @@ const _: () = assert!(size_of::<PaddedNode>() == 64);
 pub fn run_benchmark(
     buffer_size_bytes: usize,
     core: CoreId,
-    iterations: usize,
-    samples: usize,
+    num_iterations: usize,
+    num_samples: usize,
     args: &CliArgs,
 ) {
     if args.numa {
@@ -89,12 +89,11 @@ pub fn run_benchmark(
     // NOTE: Pointer Chasing by index
 
     // sample
-    let iterations_per_sample = iterations / samples;
-    let mut sample_latencies = Vec::with_capacity(samples);
+    let mut sample_latencies = Vec::with_capacity(num_samples);
     // loop unrolling
     let batch_size = 16;
-    let loop_count = iterations_per_sample / batch_size;
-    let remainder = iterations_per_sample % batch_size;
+    let loop_count = num_iterations / batch_size;
+    let remainder = num_iterations % batch_size;
 
     let clock = quanta::Clock::new();
 
@@ -111,7 +110,9 @@ pub fn run_benchmark(
         }
     }
 
-    for _ in 0..samples {
+    let overhead = measure_overhead_ns(&clock, num_samples);
+
+    for _ in 0..num_samples {
         std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 
         let start = raw_fenced(&clock);
@@ -133,7 +134,8 @@ pub fn run_benchmark(
 
         // let cycles = end - start;
         let duration_ns = clock.delta_as_nanos(start, end);
-        let latency = duration_ns as f64 / iterations_per_sample as f64;
+        let duration_ns = duration_ns.saturating_sub(overhead);
+        let latency = duration_ns as f64 / num_iterations as f64;
         sample_latencies.push(latency);
     }
     black_box(current_idx);
@@ -147,7 +149,7 @@ pub fn run_benchmark(
         .fold(f64::NEG_INFINITY, |a, &b| a.max(b));
 
     let sum_latency: f64 = sample_latencies.iter().sum();
-    let mean_latency = sum_latency / samples as f64;
+    let mean_latency = sum_latency / num_samples as f64;
     sample_latencies.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let n = sample_latencies.len();
     let median = if n % 2 == 0 {
