@@ -10,7 +10,7 @@ use seq_macro::seq;
 
 use crate::CliArgs;
 use crate::topo::SystemTopology;
-use crate::util::{measure_overhead_ns, raw_fenced};
+use crate::util::{tsc_end, tsc_start};
 
 #[derive(Clone, Copy, Default)]
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -110,12 +110,13 @@ pub fn run_benchmark(
         }
     }
 
-    let overhead = measure_overhead_ns(&clock, num_samples);
+    // let overhead = measure_overhead_ns(&clock, num_samples);
 
     for _ in 0..num_samples {
         std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 
-        let start = raw_fenced(&clock);
+        // let start = raw_fenced(&clock);
+        let start = tsc_start();
         for _ in 0..loop_count {
             unsafe {
                 seq!(_ in 0..16 {
@@ -129,12 +130,13 @@ pub fn run_benchmark(
                 current_idx = arena.get_unchecked(current_idx).next_index;
             }
         }
-        let end = raw_fenced(&clock);
+        // let end = raw_fenced(&clock);
+        let end = tsc_end();
         std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 
         // let cycles = end - start;
         let duration_ns = clock.delta_as_nanos(start, end);
-        let duration_ns = duration_ns.saturating_sub(overhead);
+        // let duration_ns = duration_ns.saturating_sub(overhead);
         let latency = duration_ns as f64 / num_iterations as f64;
         sample_latencies.push(latency);
     }
