@@ -4,7 +4,7 @@
 use bytesize::ByteSize;
 use clap::Parser;
 
-use crate::benchmark::{PaddedNode, run_benchmark};
+use crate::benchmark::PaddedNode;
 
 mod benchmark;
 mod benchmark_ptr;
@@ -85,39 +85,27 @@ fn main() {
         cores[0]
     };
 
-    println!("Run on core: {}\n", core.id);
+    // println!("Run on core: {}\n", core.id);
+    // {
+    //     for size in &args.sizes {
+    //         assert!(
+    //             size.as_u64() <= usize::MAX as u64,
+    //             "Buffer size exceeds max usize limit!"
+    //         );
+    //         run_benchmark(
+    //             size.as_u64() as usize,
+    //             core,
+    //             args.num_iterations,
+    //             args.num_samples,
+    //             &args,
+    //         );
+    //     }
+    // }
+    //
+    // println!(
+    //     "--------------------------------------------------------------------------------------"
+    // );
     {
-        for size in &args.sizes {
-            assert!(
-                size.as_u64() <= usize::MAX as u64,
-                "Buffer size exceeds max usize limit!"
-            );
-            run_benchmark(
-                size.as_u64() as usize,
-                core,
-                args.num_iterations,
-                args.num_samples,
-                &args,
-            );
-        }
-    }
-
-    println!(
-        "--------------------------------------------------------------------------------------"
-    );
-    {
-        for size in &args.sizes {
-            assert!(
-                size.as_u64() <= usize::MAX as u64,
-                "Buffer size exceeds max usize limit!"
-            );
-            benchmark_ptr::run_benchmark(
-                size.as_u64() as usize,
-                core,
-                args.num_iterations,
-                args.num_samples,
-                &args,
-            );
-        }
+        benchmark_ptr::run_benchmark(core, &args);
     }
 }

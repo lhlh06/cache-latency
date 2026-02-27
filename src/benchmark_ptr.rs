@@ -30,13 +30,58 @@ impl Default for PaddedNode {
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const _: () = assert!(size_of::<PaddedNode>() == 64);
 
-pub fn run_benchmark(
+#[derive(Debug, Default)]
+struct Result {
+    size: String,
+    min: f64,
+    med: f64,
+    avg: f64,
+    max: f64,
+    est_cycle: f64,
+    est_freq: f64,
+}
+
+pub fn run_benchmark(core: CoreId, args: &CliArgs) {
+    let mut results = Vec::with_capacity(args.sizes.len());
+    for size in &args.sizes {
+        assert!(
+            size.as_u64() <= usize::MAX as u64,
+            "Buffer size exceeds max usize limit!"
+        );
+        let result = benchmark(
+            size.as_u64() as usize,
+            core,
+            args.num_iterations,
+            args.num_samples,
+            args,
+        );
+        results.push(result);
+    }
+
+    if args.csv {
+        println!("size,min,med,avg,max,~cyc,~freq");
+        results.iter().for_each(|result| {
+            println!(
+                "{},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2}",
+                result.size,
+                result.min,
+                result.med,
+                result.avg,
+                result.max,
+                result.est_cycle,
+                result.est_freq
+            );
+        });
+    }
+}
+
+fn benchmark(
     buffer_size_bytes: usize,
     core: CoreId,
     num_iterations: usize,
     num_samples: usize,
     args: &CliArgs,
-) {
+) -> Result {
     if args.numa {
         let topo = SystemTopology::new();
         topo.bind(core.id, 0);
@@ -50,7 +95,7 @@ pub fn run_benchmark(
 
     if num_elements < 2 {
         println!("The number of elemets is too small to run benchmark.");
-        return;
+        return Result::default();
     }
 
     // Assign memory layout
@@ -180,7 +225,6 @@ pub fn run_benchmark(
 
     let est_cycles = min_latency * sys_bench_freq;
 
-    // TODO: show data in table format
     println!(
         "Size {:>10} | Min {:>6.2} ns | Med {:>6.2}ns | Avg {:>6.2} ns | Max {:>6.2} ns | ~Cyc {:>5.1} | {:.2} GHz",
         ByteSize(buffer_size_bytes.try_into().unwrap()),
@@ -191,4 +235,14 @@ pub fn run_benchmark(
         est_cycles,
         sys_bench_freq
     );
+
+    Result {
+        size: ByteSize(buffer_size_bytes.try_into().unwrap()).to_string(),
+        min: min_latency,
+        med: median,
+        max: max_latency,
+        est_cycle: est_cycles,
+        avg: mean_latency,
+        est_freq: sys_bench_freq,
+    }
 }
