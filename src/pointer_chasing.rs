@@ -12,30 +12,82 @@ use crate::CliArgs;
 use crate::topo::SystemTopology;
 use crate::util::{tsc_end, tsc_start};
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[repr(align(64))]
 pub struct PaddedNode {
-    next_index: usize,
+    next: *mut PaddedNode,
+}
+
+impl Default for PaddedNode {
+    fn default() -> Self {
+        Self {
+            next: std::ptr::null_mut(),
+        }
+    }
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const _: () = assert!(size_of::<PaddedNode>() == 64);
 
-pub fn run_benchmark(
+#[derive(Debug, Default)]
+struct Result {
+    size: String,
+    min: f64,
+    med: f64,
+    avg: f64,
+    max: f64,
+    est_cycle: f64,
+    est_freq: f64,
+}
+
+pub fn run_benchmark(core: CoreId, args: &CliArgs) {
+    let mut results = Vec::with_capacity(args.sizes.len());
+    for size in &args.sizes {
+        assert!(
+            size.as_u64() <= usize::MAX as u64,
+            "Buffer size exceeds max usize limit!"
+        );
+        let result = benchmark(
+            size.as_u64() as usize,
+            core,
+            args.num_iterations,
+            args.num_samples,
+            args,
+        );
+        results.push(result);
+    }
+
+    if args.csv {
+        println!("size,min,med,avg,max,~cyc,~freq");
+        results.iter().for_each(|result| {
+            println!(
+                "{},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2}",
+                result.size,
+                result.min,
+                result.med,
+                result.avg,
+                result.max,
+                result.est_cycle,
+                result.est_freq
+            );
+        });
+    }
+}
+
+fn benchmark(
     buffer_size_bytes: usize,
     core: CoreId,
     num_iterations: usize,
     num_samples: usize,
     args: &CliArgs,
-) {
+) -> Result {
     if args.numa {
         let topo = SystemTopology::new();
         topo.bind(core.id, 0);
     } else {
         core_affinity::set_for_current(core);
     }
-
     let mut system = sysinfo::System::new();
 
     let node_size = size_of::<PaddedNode>();
@@ -43,28 +95,40 @@ pub fn run_benchmark(
 
     if num_elements < 2 {
         println!("The number of elemets is too small to run benchmark.");
-        return;
+        return Result::default();
     }
 
-    let mut arena: Vec<PaddedNode> = vec![PaddedNode::default(); num_elements];
+    // Assign memory layout
+    let mut arena: Vec<PaddedNode> = Vec::with_capacity(num_elements);
+    for _ in 0..num_elements {
+        arena.push(PaddedNode::default());
+    }
 
     // Random Shuffle
     let mut indices: Vec<usize> = (0..num_elements).collect();
     let mut rng = rng();
     indices.shuffle(&mut rng);
 
-    // indices[i] -> indices[i+1]
-    for i in 0..num_elements - 1 {
-        let curr_idx = indices[i];
-        let next_idx = indices[i + 1];
-        arena[curr_idx].next_index = next_idx;
+    // Pointer Swizzling
+    let base_ptr = arena.as_mut_ptr();
+
+    unsafe {
+        for i in 0..num_elements - 1 {
+            let curr_idx = indices[i];
+            let next_idx = indices[i + 1];
+
+            let curr_node_ptr = base_ptr.add(curr_idx);
+            let next_node_ptr = base_ptr.add(next_idx);
+
+            (*curr_node_ptr).next = next_node_ptr;
+        }
+
+        let last_idx = indices[num_elements - 1];
+        let first_idx = indices[0];
+        (*base_ptr.add(last_idx)).next = base_ptr.add(first_idx);
     }
 
-    let last_idx = indices[num_elements - 1];
-    let first_idx = indices[0];
-    arena[last_idx].next_index = first_idx;
-
-    let mut current_idx = first_idx;
+    let mut current_ptr = unsafe { base_ptr.add(indices[0]) };
 
     // Warmup
     {
@@ -74,7 +138,7 @@ pub fn run_benchmark(
         while warmup_start.elapsed() < min_warmup_duration {
             for _ in 0..1_000 {
                 unsafe {
-                    current_idx = black_box(arena.get_unchecked(current_idx).next_index);
+                    current_ptr = std::ptr::read_volatile(&(*current_ptr).next);
                 }
             }
         }
@@ -84,9 +148,7 @@ pub fn run_benchmark(
     system.refresh_cpu_frequency();
     let sys_bench_freq = system.cpus()[core.id].frequency() as f64 / 1000.0;
 
-    current_idx = black_box(current_idx);
-
-    // NOTE: Pointer Chasing by index
+    // NOTE: Pointer Chasing by pointer
 
     // sample
     let mut sample_latencies = Vec::with_capacity(num_samples);
@@ -97,50 +159,52 @@ pub fn run_benchmark(
 
     let clock = quanta::Clock::new();
 
-    // warmup again due to `read frequency`
+    // Warmup again due to `read frequency`
     {
         let warmup_start = Instant::now();
         let min_warmup_duration = Duration::from_millis(500);
         while warmup_start.elapsed() < min_warmup_duration {
             for _ in 0..1_000 {
                 unsafe {
-                    current_idx = black_box(arena.get_unchecked(current_idx).next_index);
+                    current_ptr = std::ptr::read_volatile(&(*current_ptr).next);
                 }
             }
         }
     }
-
     // let overhead = measure_overhead_ns(&clock, num_samples);
 
     for _ in 0..num_samples {
         std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 
+        // TODO: remove overhead, it is useful when it runs in a small numbers.
+        // let start = clock.raw();
         // let start = raw_fenced(&clock);
         let start = tsc_start();
         for _ in 0..loop_count {
-            unsafe {
-                seq!(_ in 0..16 {
-                        current_idx = arena.get_unchecked(current_idx).next_index;
-                });
-            }
+            seq!(_ in 0..16 {
+                unsafe {
+                    current_ptr = std::ptr::read_volatile(&(*current_ptr).next);
+                }
+            });
         }
 
         for _ in 0..remainder {
             unsafe {
-                current_idx = arena.get_unchecked(current_idx).next_index;
+                current_ptr = std::ptr::read_volatile(&(*current_ptr).next);
             }
         }
+        // let end = clock.raw();
         // let end = raw_fenced(&clock);
         let end = tsc_end();
         std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 
-        // let cycles = end - start;
+        // let cycles_total = (end - start) as f64;
         let duration_ns = clock.delta_as_nanos(start, end);
         // let duration_ns = duration_ns.saturating_sub(overhead);
         let latency = duration_ns as f64 / num_iterations as f64;
         sample_latencies.push(latency);
     }
-    black_box(current_idx);
+    black_box(current_ptr);
 
     let min_latency = sample_latencies
         .iter()
@@ -162,8 +226,7 @@ pub fn run_benchmark(
 
     let est_cycles = min_latency * sys_bench_freq;
 
-    // TODO: show data in table format
-    println!(
+    eprintln!(
         "Size {:>10} | Min {:>6.2} ns | Med {:>6.2}ns | Avg {:>6.2} ns | Max {:>6.2} ns | ~Cyc {:>5.1} | {:.2} GHz",
         ByteSize(buffer_size_bytes.try_into().unwrap()),
         min_latency,
@@ -173,4 +236,14 @@ pub fn run_benchmark(
         est_cycles,
         sys_bench_freq
     );
+
+    Result {
+        size: ByteSize(buffer_size_bytes.try_into().unwrap()).to_string(),
+        min: min_latency,
+        med: median,
+        max: max_latency,
+        est_cycle: est_cycles,
+        avg: mean_latency,
+        est_freq: sys_bench_freq,
+    }
 }

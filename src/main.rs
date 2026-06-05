@@ -1,13 +1,11 @@
 #![cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #![warn(clippy::all)]
 
+use crate::pointer_chasing::PaddedNode;
 use bytesize::ByteSize;
 use clap::Parser;
 
-use crate::benchmark::PaddedNode;
-
-mod benchmark;
-mod benchmark_ptr;
+mod pointer_chasing;
 mod topo;
 mod util;
 
@@ -55,6 +53,7 @@ pub struct CliArgs {
     #[clap(long, value_parser)]
     numa: bool,
 }
+
 pub fn get_cpuid() -> Option<raw_cpuid::CpuId<raw_cpuid::native_cpuid::CpuIdReaderNative>> {
     Some(raw_cpuid::CpuId::default())
 }
@@ -65,14 +64,16 @@ fn main() {
         .and_then(|c| c.get_processor_brand_string())
         .map(|c| c.as_str().to_string())
     {
-        println!("CPU: {}", brand);
+        eprintln!("CPU: {}", brand);
     }
 
-    println!("Size of PaddedNode: {} bytes", size_of::<PaddedNode>());
-    println!("Number of iterations: {}", args.num_iterations);
-    println!("Number of samples:    {}", args.num_samples);
+    eprintln!("Size of PaddedNode: {} bytes", size_of::<PaddedNode>());
+    eprintln!("Number of iterations: {}", args.num_iterations);
+    eprintln!("Number of samples:    {}", args.num_samples);
+    // TODO: add feature support, then we can compile this crate without
+    // `hwlocality` dependency.
     if args.numa {
-        println!("With NUMA enabled");
+        eprintln!("With NUMA enabled");
     }
     let cores = core_affinity::get_core_ids().expect("unable to get cores");
 
@@ -85,27 +86,8 @@ fn main() {
         cores[0]
     };
 
-    // println!("Run on core: {}\n", core.id);
-    // {
-    //     for size in &args.sizes {
-    //         assert!(
-    //             size.as_u64() <= usize::MAX as u64,
-    //             "Buffer size exceeds max usize limit!"
-    //         );
-    //         run_benchmark(
-    //             size.as_u64() as usize,
-    //             core,
-    //             args.num_iterations,
-    //             args.num_samples,
-    //             &args,
-    //         );
-    //     }
-    // }
-    //
-    // println!(
-    //     "--------------------------------------------------------------------------------------"
-    // );
+    // run pointer-chasing benchmark
     {
-        benchmark_ptr::run_benchmark(core, &args);
+        pointer_chasing::run_benchmark(core, &args);
     }
 }
