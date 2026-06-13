@@ -1,4 +1,4 @@
-#![cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#![cfg(target_arch = "x86_64")]
 #![warn(clippy::all)]
 
 use crate::pointer_chasing::PaddedNode;
