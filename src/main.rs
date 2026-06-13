@@ -31,13 +31,15 @@ const DEFAULT_SIZES: &str = "8kiB,16kiB,32kiB,64kiB,128kiB,256kiB,512kiB,1miB,2m
 
 #[derive(clap::Parser)]
 pub struct CliArgs {
-    /// The number of iterations per sample
+    /// The number of iterations per sample.
     #[clap(default_value_t = DEFAULT_ITERATIONS, value_parser)]
     num_iterations: usize,
 
+    /// The number of samples to run.
     #[clap(default_value_t = DEFAULT_SAMPLES, value_parser)]
     num_samples: usize,
 
+    /// Output as csv format in stdout.
     #[clap(long, value_parser)]
     csv: bool,
 
