@@ -32,11 +32,11 @@ const DEFAULT_SIZES: &str = "8kiB,16kiB,32kiB,64kiB,128kiB,256kiB,512kiB,1miB,2m
 #[derive(clap::Parser)]
 pub struct CliArgs {
     /// The number of iterations per sample.
-    #[clap(default_value_t = DEFAULT_ITERATIONS, value_parser)]
+    #[clap(default_value_t = DEFAULT_ITERATIONS, value_parser = parse_positive_usize)]
     num_iterations: usize,
 
     /// The number of samples to run.
-    #[clap(default_value_t = DEFAULT_SAMPLES, value_parser)]
+    #[clap(default_value_t = DEFAULT_SAMPLES, value_parser = parse_positive_usize)]
     num_samples: usize,
 
     /// Output as csv format in stdout.
@@ -58,6 +58,18 @@ pub struct CliArgs {
     /// Subtract the TSC timing overhead from each sample.
     #[clap(long, value_parser)]
     subtract_overhead: bool,
+}
+
+fn parse_positive_usize(value: &str) -> Result<usize, String> {
+    let value = value
+        .parse::<usize>()
+        .map_err(|_| "value must be a positive integer".to_string())?;
+
+    if value == 0 {
+        Err("value must be greater than zero".to_string())
+    } else {
+        Ok(value)
+    }
 }
 
 pub fn get_cpuid() -> Option<raw_cpuid::CpuId<raw_cpuid::native_cpuid::CpuIdReaderNative>> {
