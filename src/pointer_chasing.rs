@@ -1,5 +1,5 @@
 use std::hint::black_box;
-
+use std::sync::atomic::{Ordering, compiler_fence};
 use std::time::{Duration, Instant};
 
 use bytesize::ByteSize;
@@ -10,10 +10,10 @@ use seq_macro::seq;
 
 use crate::CliArgs;
 use crate::topo::SystemTopology;
-use crate::util::{tsc_end, tsc_start};
+use crate::util::{measure_tsc_overhead, tsc_end, tsc_start};
 
 #[derive(Clone, Copy)]
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 #[repr(align(64))]
 pub struct PaddedNode {
     next: *mut PaddedNode,
@@ -27,7 +27,7 @@ impl Default for PaddedNode {
     }
 }
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 const _: () = assert!(size_of::<PaddedNode>() == 64);
 
 #[derive(Debug, Default)]
@@ -39,6 +39,8 @@ struct Result {
     max: f64,
     est_cycle: f64,
     est_freq: f64,
+    tsc_overhead: u64,
+    overhead_ratio: f64,
 }
 
 pub fn run_benchmark(core: CoreId, args: &CliArgs) {
@@ -59,17 +61,19 @@ pub fn run_benchmark(core: CoreId, args: &CliArgs) {
     }
 
     if args.csv {
-        println!("size,min,med,avg,max,~cyc,~freq");
+        println!("size,min,med,avg,max,~cyc,~freq,tsc_overhead,overhead_pct");
         results.iter().for_each(|result| {
             println!(
-                "{},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2}",
+                "{},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{},{:.4}",
                 result.size,
                 result.min,
                 result.med,
                 result.avg,
                 result.max,
                 result.est_cycle,
-                result.est_freq
+                result.est_freq,
+                result.tsc_overhead,
+                result.overhead_ratio,
             );
         });
     }
@@ -130,19 +134,9 @@ fn benchmark(
 
     let mut current_ptr = unsafe { base_ptr.add(indices[0]) };
 
-    // Warmup
-    {
-        let warmup_start = Instant::now();
-        let min_warmup_duration = Duration::from_millis(500);
-
-        while warmup_start.elapsed() < min_warmup_duration {
-            for _ in 0..1_000 {
-                unsafe {
-                    current_ptr = std::ptr::read_volatile(&(*current_ptr).next);
-                }
-            }
-        }
-    }
+    // Warm up the current working set with the same dependent-load pattern
+    // used by the measured pointer-chasing loop.
+    current_ptr = warmup_pointer_chasing(current_ptr);
 
     // read frequency after warmup
     system.refresh_cpu_frequency();
@@ -152,6 +146,7 @@ fn benchmark(
 
     // sample
     let mut sample_latencies = Vec::with_capacity(num_samples);
+    let mut overhead_ratios = Vec::with_capacity(num_samples);
     // loop unrolling
     let batch_size = 16;
     let loop_count = num_iterations / batch_size;
@@ -160,25 +155,13 @@ fn benchmark(
     let clock = quanta::Clock::new();
 
     // Warmup again due to `read frequency`
-    {
-        let warmup_start = Instant::now();
-        let min_warmup_duration = Duration::from_millis(500);
-        while warmup_start.elapsed() < min_warmup_duration {
-            for _ in 0..1_000 {
-                unsafe {
-                    current_ptr = std::ptr::read_volatile(&(*current_ptr).next);
-                }
-            }
-        }
-    }
-    // let overhead = measure_overhead_ns(&clock, num_samples);
+    current_ptr = warmup_pointer_chasing(current_ptr);
+
+    let tsc_overhead = measure_tsc_overhead(500);
 
     for _ in 0..num_samples {
-        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+        compiler_fence(Ordering::SeqCst);
 
-        // TODO: remove overhead, it is useful when it runs in a small numbers.
-        // let start = clock.raw();
-        // let start = raw_fenced(&clock);
         let start = tsc_start();
         for _ in 0..loop_count {
             seq!(_ in 0..16 {
@@ -193,57 +176,91 @@ fn benchmark(
                 current_ptr = std::ptr::read_volatile(&(*current_ptr).next);
             }
         }
-        // let end = clock.raw();
-        // let end = raw_fenced(&clock);
         let end = tsc_end();
-        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+        compiler_fence(Ordering::SeqCst);
 
-        // let cycles_total = (end - start) as f64;
-        let duration_ns = clock.delta_as_nanos(start, end);
-        // let duration_ns = duration_ns.saturating_sub(overhead);
+        let raw_elapsed_ticks = end.saturating_sub(start);
+        let elapsed_ticks = if args.subtract_overhead {
+            raw_elapsed_ticks.saturating_sub(tsc_overhead)
+        } else {
+            raw_elapsed_ticks
+        };
+
+        let overhead_ratio = if raw_elapsed_ticks == 0 {
+            0.0
+        } else {
+            tsc_overhead as f64 / raw_elapsed_ticks as f64 * 100.0
+        };
+
+        let duration_ns = clock.delta_as_nanos(0, elapsed_ticks);
         let latency = duration_ns as f64 / num_iterations as f64;
         sample_latencies.push(latency);
+        overhead_ratios.push(overhead_ratio);
     }
     black_box(current_ptr);
 
+    // collect latencies
     let min_latency = sample_latencies
         .iter()
         .fold(f64::INFINITY, |a, &b| a.min(b));
-
     let max_latency = sample_latencies
         .iter()
         .fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-
     let sum_latency: f64 = sample_latencies.iter().sum();
     let mean_latency = sum_latency / num_samples as f64;
-    sample_latencies.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let n = sample_latencies.len();
-    let median = if n % 2 == 0 {
-        (sample_latencies[n / 2 - 1] + sample_latencies[n / 2]) / 2.0
-    } else {
-        sample_latencies[n / 2]
-    };
-
+    let median_latency = median(&mut sample_latencies);
+    let overhead_ratio = median(&mut overhead_ratios);
     let est_cycles = min_latency * sys_bench_freq;
 
     eprintln!(
-        "Size {:>10} | Min {:>6.2} ns | Med {:>6.2}ns | Avg {:>6.2} ns | Max {:>6.2} ns | ~Cyc {:>5.1} | {:.2} GHz",
+        "Size {:>10} | Min {:>6.2} ns | Med {:>6.2}ns | Avg {:>6.2} ns | Max {:>6.2} ns | ~Cyc {:>5.1} | {:.2} GHz | TSC OH {} ticks ({:.4}%)",
         ByteSize(buffer_size_bytes.try_into().unwrap()),
         min_latency,
-        median,
+        median_latency,
         mean_latency,
         max_latency,
         est_cycles,
-        sys_bench_freq
+        sys_bench_freq,
+        tsc_overhead,
+        overhead_ratio,
     );
 
     Result {
         size: ByteSize(buffer_size_bytes.try_into().unwrap()).to_string(),
         min: min_latency,
-        med: median,
+        med: median_latency,
         max: max_latency,
         est_cycle: est_cycles,
         avg: mean_latency,
         est_freq: sys_bench_freq,
+        tsc_overhead,
+        overhead_ratio,
+    }
+}
+
+fn warmup_pointer_chasing(mut current_ptr: *mut PaddedNode) -> *mut PaddedNode {
+    let warmup_start = Instant::now();
+    let min_warmup_duration = Duration::from_millis(500);
+
+    while warmup_start.elapsed() < min_warmup_duration {
+        for _ in 0..10_000 {
+            unsafe {
+                current_ptr = std::ptr::read_volatile(&(*current_ptr).next);
+            }
+        }
+    }
+
+    current_ptr
+}
+
+fn median(values: &mut [f64]) -> f64 {
+    assert!(!values.is_empty(), "cannot calculate median of empty data");
+    values.sort_by(|a, b| a.total_cmp(b));
+
+    let mid = values.len() / 2;
+    if values.len().is_multiple_of(2) {
+        (values[mid - 1] + values[mid]) / 2.0
+    } else {
+        values[mid]
     }
 }

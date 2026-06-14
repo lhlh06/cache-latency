@@ -54,6 +54,10 @@ pub struct CliArgs {
     /// Specify the program whether bind local numa if possible.
     #[clap(long, value_parser)]
     numa: bool,
+
+    /// Subtract the TSC timing overhead from each sample.
+    #[clap(long, value_parser)]
+    subtract_overhead: bool,
 }
 
 pub fn get_cpuid() -> Option<raw_cpuid::CpuId<raw_cpuid::native_cpuid::CpuIdReaderNative>> {
