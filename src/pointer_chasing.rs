@@ -44,6 +44,14 @@ struct Result {
 
 pub fn run_benchmark(core: CoreId, args: &CliArgs) {
     let mut results = Vec::with_capacity(args.sizes.len());
+
+    // pin to selected core
+    assert!(
+        core_affinity::set_for_current(core),
+        "failed to pin benchmark thread to core {}",
+        core.id
+    );
+
     for size in &args.sizes {
         assert!(
             size.as_u64() <= usize::MAX as u64,
@@ -85,52 +93,16 @@ fn benchmark(
     num_samples: usize,
     args: &CliArgs,
 ) -> Result {
-    assert!(
-        core_affinity::set_for_current(core),
-        "failed to pin benchmark thread to core {}",
-        core.id
-    );
     let mut system = sysinfo::System::new();
 
     let node_size = size_of::<PaddedNode>();
     let num_elements = buffer_size_bytes / node_size;
 
     if num_elements < 2 {
-        println!("The number of elemets is too small to run benchmark.");
-        return Result::default();
+        panic!("The number of elemets is too small to run benchmark.");
     }
 
-    // Assign memory layout
-    let mut arena: Vec<PaddedNode> = Vec::with_capacity(num_elements);
-    for _ in 0..num_elements {
-        arena.push(PaddedNode::default());
-    }
-
-    // Random Shuffle
-    let mut indices: Vec<usize> = (0..num_elements).collect();
-    let mut rng = rng();
-    indices.shuffle(&mut rng);
-
-    // Pointer Swizzling
-    let base_ptr = arena.as_mut_ptr();
-
-    unsafe {
-        for i in 0..num_elements - 1 {
-            let curr_idx = indices[i];
-            let next_idx = indices[i + 1];
-
-            let curr_node_ptr = base_ptr.add(curr_idx);
-            let next_node_ptr = base_ptr.add(next_idx);
-
-            (*curr_node_ptr).next = next_node_ptr;
-        }
-
-        let last_idx = indices[num_elements - 1];
-        let first_idx = indices[0];
-        (*base_ptr.add(last_idx)).next = base_ptr.add(first_idx);
-    }
-
-    let mut current_ptr = unsafe { base_ptr.add(indices[0]) };
+    let (_arena, mut current_ptr) = build_pointer_ring(num_elements);
 
     // Warm up the current working set with the same dependent-load pattern
     // used by the measured pointer-chasing loop.
@@ -140,19 +112,18 @@ fn benchmark(
     system.refresh_cpu_frequency();
     let sys_bench_freq = system.cpus()[core.id].frequency() as f64 / 1000.0;
 
-    // NOTE: Pointer Chasing by pointer
-
     // sample
     let mut sample_latencies = Vec::with_capacity(num_samples);
     let mut overhead_ratios = Vec::with_capacity(num_samples);
+
     // loop unrolling
-    let batch_size = 16;
-    let loop_count = num_iterations / batch_size;
-    let remainder = num_iterations % batch_size;
+    const BATCH_SIZE: usize = 16;
+    let loop_count = num_iterations / BATCH_SIZE;
+    let remainder = num_iterations % BATCH_SIZE;
 
     let clock = quanta::Clock::new();
 
-    // Warmup again due to `read frequency`
+    // Warmup again due to reading frequency
     current_ptr = warmup_pointer_chasing(current_ptr);
 
     let tsc_overhead = measure_tsc_overhead(500);
@@ -249,6 +220,27 @@ fn warmup_pointer_chasing(mut current_ptr: *mut PaddedNode) -> *mut PaddedNode {
     }
 
     current_ptr
+}
+
+fn build_pointer_ring(num_elements: usize) -> (Vec<PaddedNode>, *mut PaddedNode) {
+    assert!(num_elements >= 2, "pointer ring needs at least two nodes");
+
+    let mut arena = vec![PaddedNode::default(); num_elements];
+    let mut indices: Vec<usize> = (0..num_elements).collect();
+    indices.shuffle(&mut rng());
+
+    let base_ptr = arena.as_mut_ptr();
+    unsafe {
+        for pair in indices.windows(2) {
+            (*base_ptr.add(pair[0])).next = base_ptr.add(pair[1]);
+        }
+
+        let first_idx = indices[0];
+        let last_idx = indices[indices.len() - 1];
+        (*base_ptr.add(last_idx)).next = base_ptr.add(first_idx);
+
+        (arena, base_ptr.add(first_idx))
+    }
 }
 
 fn median(values: &mut [f64]) -> f64 {
