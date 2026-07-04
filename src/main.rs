@@ -6,7 +6,6 @@ use bytesize::ByteSize;
 use clap::Parser;
 
 mod pointer_chasing;
-mod topo;
 mod util;
 
 const DEFAULT_ITERATIONS: usize = 30_000;
@@ -51,10 +50,6 @@ pub struct CliArgs {
     #[clap(short, long, value_parser)]
     core: Option<usize>,
 
-    /// Specify the program whether bind local numa if possible.
-    #[clap(long, value_parser)]
-    numa: bool,
-
     /// Subtract the TSC timing overhead from each sample.
     #[clap(long, value_parser)]
     subtract_overhead: bool,
@@ -88,11 +83,6 @@ fn main() {
     eprintln!("Size of PaddedNode: {} bytes", size_of::<PaddedNode>());
     eprintln!("Number of iterations: {}", args.num_iterations);
     eprintln!("Number of samples:    {}", args.num_samples);
-    // TODO: add feature support, then we can compile this crate without
-    // `hwlocality` dependency.
-    if args.numa {
-        eprintln!("With NUMA enabled");
-    }
     let cores = core_affinity::get_core_ids().expect("unable to get cores");
 
     let core = if let Some(core) = args.core {

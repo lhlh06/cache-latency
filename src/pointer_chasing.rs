@@ -9,7 +9,6 @@ use rand::seq::SliceRandom;
 use seq_macro::seq;
 
 use crate::CliArgs;
-use crate::topo::SystemTopology;
 use crate::util::{measure_tsc_overhead, tsc_end, tsc_start};
 
 #[derive(Clone, Copy)]
@@ -86,12 +85,11 @@ fn benchmark(
     num_samples: usize,
     args: &CliArgs,
 ) -> Result {
-    if args.numa {
-        let topo = SystemTopology::new();
-        topo.bind(core.id, 0);
-    } else {
-        core_affinity::set_for_current(core);
-    }
+    assert!(
+        core_affinity::set_for_current(core),
+        "failed to pin benchmark thread to core {}",
+        core.id
+    );
     let mut system = sysinfo::System::new();
 
     let node_size = size_of::<PaddedNode>();
