@@ -98,7 +98,7 @@ fn benchmark(
 
     // Warm up the current working set with the same dependent-load pattern
     // used by the measured pointer-chasing loop.
-    current_ptr = warmup_pointer_chasing(current_ptr);
+    current_ptr = warmup_pointer_chasing(current_ptr, num_elements);
 
     // read frequency after warmup
     system.refresh_cpu_frequency();
@@ -116,7 +116,7 @@ fn benchmark(
     let clock = quanta::Clock::new();
 
     // Warmup again due to reading frequency
-    current_ptr = warmup_pointer_chasing(current_ptr);
+    current_ptr = warmup_pointer_chasing(current_ptr, num_elements);
 
     let tsc_overhead = measure_tsc_overhead(500);
 
@@ -199,16 +199,18 @@ fn benchmark(
     }
 }
 
-fn warmup_pointer_chasing(mut current_ptr: *mut PaddedNode) -> *mut PaddedNode {
+fn warmup_pointer_chasing(mut current_ptr: *mut PaddedNode, min_visits: usize) -> *mut PaddedNode {
     let warmup_start = Instant::now();
     let min_warmup_duration = Duration::from_millis(500);
+    let mut visits = 0;
 
-    while warmup_start.elapsed() < min_warmup_duration {
+    while warmup_start.elapsed() < min_warmup_duration || visits < min_visits {
         for _ in 0..10_000 {
             unsafe {
                 current_ptr = std::ptr::read_volatile(&(*current_ptr).next);
             }
         }
+        visits += 10_000;
     }
 
     current_ptr
