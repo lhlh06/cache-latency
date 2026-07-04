@@ -43,7 +43,13 @@ pub struct CliArgs {
     csv: bool,
 
     /// Specify the buffer sizes that should be run in benchmark.
-    #[clap(short, long, value_delimiter(','), default_value = DEFAULT_SIZES, value_parser)]
+    #[clap(
+        short,
+        long,
+        value_delimiter(','),
+        default_value = DEFAULT_SIZES,
+        value_parser = parse_buffer_size
+    )]
     sizes: Vec<ByteSize>,
 
     /// Specify the core by id that should be used. By default, available core 0 is used.
@@ -64,6 +70,24 @@ fn parse_positive_usize(value: &str) -> Result<usize, String> {
         Err("value must be greater than zero".to_string())
     } else {
         Ok(value)
+    }
+}
+
+fn parse_buffer_size(value: &str) -> Result<ByteSize, String> {
+    let size = value
+        .parse::<ByteSize>()
+        .map_err(|err| format!("invalid buffer size: {err}"))?;
+    let min_size = (2 * size_of::<PaddedNode>()) as u64;
+
+    if size.as_u64() < min_size {
+        Err(format!(
+            "buffer size must be at least {}",
+            ByteSize(min_size)
+        ))
+    } else if size.as_u64() > usize::MAX as u64 {
+        Err("buffer size exceeds usize::MAX".to_string())
+    } else {
+        Ok(size)
     }
 }
 

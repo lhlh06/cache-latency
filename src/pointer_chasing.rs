@@ -53,10 +53,6 @@ pub fn run_benchmark(core: CoreId, args: &CliArgs) {
     );
 
     for size in &args.sizes {
-        assert!(
-            size.as_u64() <= usize::MAX as u64,
-            "Buffer size exceeds max usize limit!"
-        );
         let result = benchmark(
             size.as_u64() as usize,
             core,
@@ -97,10 +93,6 @@ fn benchmark(
 
     let node_size = size_of::<PaddedNode>();
     let num_elements = buffer_size_bytes / node_size;
-
-    if num_elements < 2 {
-        panic!("The number of elemets is too small to run benchmark.");
-    }
 
     let (_arena, mut current_ptr) = build_pointer_ring(num_elements);
 
